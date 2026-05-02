@@ -107,6 +107,34 @@ export default function App() {
     }
   };
 
+  const playGong = () => {
+    try {
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') ctx.resume();
+
+      const playTone = (freq: number, startTime: number, duration: number) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + startTime);
+        gain.gain.setValueAtTime(0, ctx.currentTime + startTime);
+        gain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + startTime + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startTime + duration);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(ctx.currentTime + startTime);
+        osc.stop(ctx.currentTime + startTime + duration);
+      };
+
+      // DPO Ostrava Style Chime (Two tones)
+      playTone(660, 0, 0.4); // E5
+      setTimeout(() => playTone(880, 0, 0.6), 250); // A5
+    } catch (e) {}
+  };
+
   const playPaymentSound = () => {
     playSound(880, 0.1, 'sine', 0.1);
     setTimeout(() => playSound(1046.5, 0.3, 'sine', 0.1), 100);
@@ -196,27 +224,32 @@ export default function App() {
   };
 
   const playAnnouncement = () => {
-    const currentStop = config.stops[currentStopIndex] || '';
-    const nextStopName = config.stops[(currentStopIndex + 1) % config.stops.length] || '';
+    playGong();
     
-    const isRequestStop = (name: string) => name.toLowerCase().includes('(z)') || name.toLowerCase().includes('na znamení');
-    
-    let text = `Zastávka: ${currentStop.replace(/\(z\)/gi, '')}.`;
-    if (isRequestStop(currentStop)) text += " Tato zastávka je na znamení.";
-    
-    text += ` Příští zastávka: ${nextStopName.replace(/\(z\)/gi, '')}.`;
-    if (isRequestStop(nextStopName)) text += " Příští zastávka bude na znamení.";
-    
-    const msg = new SpeechSynthesisUtterance(text);
-    msg.lang = 'cs-CZ';
-    msg.pitch = 0.85; 
-    msg.rate = 0.9;
-    
-    const voices = window.speechSynthesis.getVoices();
-    const maleVoice = voices.find(v => v.lang.includes('cs') && (v.name.toLowerCase().includes('jakub') || v.name.toLowerCase().includes('matej') || v.name.toLowerCase().includes('male')));
-    if (maleVoice) msg.voice = maleVoice;
-    
-    window.speechSynthesis.speak(msg);
+    // Brief delay to let the gong sound clear before speaking
+    setTimeout(() => {
+      const currentStop = config.stops[currentStopIndex] || '';
+      const nextStopName = config.stops[(currentStopIndex + 1) % config.stops.length] || '';
+      
+      const isRequestStop = (name: string) => name.toLowerCase().includes('(z)') || name.toLowerCase().includes('na znamení');
+      
+      let text = `Zastávka: ${currentStop.replace(/\(z\)/gi, '')}.`;
+      if (isRequestStop(currentStop)) text += " Tato zastávka je na znamení.";
+      
+      text += ` Příští zastávka: ${nextStopName.replace(/\(z\)/gi, '')}.`;
+      if (isRequestStop(nextStopName)) text += " Příští zastávka bude na znamení.";
+      
+      const msg = new SpeechSynthesisUtterance(text);
+      msg.lang = 'cs-CZ';
+      msg.pitch = 0.85; 
+      msg.rate = 0.9;
+      
+      const voices = window.speechSynthesis.getVoices();
+      const maleVoice = voices.find(v => v.lang.includes('cs') && (v.name.toLowerCase().includes('jakub') || v.name.toLowerCase().includes('matej') || v.name.toLowerCase().includes('male')));
+      if (maleVoice) msg.voice = maleVoice;
+      
+      window.speechSynthesis.speak(msg);
+    }, 850);
   };
 
   const saveSettings = () => {
@@ -249,8 +282,20 @@ export default function App() {
                 id="driver-input"
                 type="text" 
                 placeholder="Zadejte jméno nebo ID"
+                className="w-full bg-[#111] p-5 rounded-2xl border border-[#333] outline-none font-bold text-white focus:border-emerald-500 transition-all text-center mb-3"
+              />
+              <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block px-1">Přístupové heslo</label>
+              <input 
+                id="password-input"
+                type="password" 
+                placeholder="••••••••"
                 className="w-full bg-[#111] p-5 rounded-2xl border border-[#333] outline-none font-bold text-white focus:border-emerald-500 transition-all text-center"
-                onKeyDown={(e) => e.key === 'Enter' && handleDriverLogin((e.target as HTMLInputElement).value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const name = (document.getElementById('driver-input') as HTMLInputElement).value;
+                    handleDriverLogin(name);
+                  }
+                }}
               />
             </div>
             

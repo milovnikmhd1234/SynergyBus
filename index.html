@@ -97,6 +97,34 @@
                 } catch (e) {}
             };
 
+            const playGong = () => {
+                try {
+                    if (!audioCtxRef.current) {
+                        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+                    const ctx = audioCtxRef.current;
+                    if (ctx.state === 'suspended') ctx.resume();
+
+                    const playTone = (freq, startTime, duration) => {
+                        const osc = ctx.createOscillator();
+                        const gain = ctx.createGain();
+                        osc.type = 'sine';
+                        osc.frequency.setValueAtTime(freq, ctx.currentTime + startTime);
+                        gain.gain.setValueAtTime(0, ctx.currentTime + startTime);
+                        gain.gain.linearRampToValueAtTime(0.1, ctx.currentTime + startTime + 0.05);
+                        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startTime + duration);
+                        osc.connect(gain);
+                        gain.connect(ctx.destination);
+                        osc.start(ctx.currentTime + startTime);
+                        osc.stop(ctx.currentTime + startTime + duration);
+                    };
+
+                    // DPO Ostrava Style Chime (Two tones)
+                    playTone(660, 0, 0.4);
+                    setTimeout(() => playTone(880, 0, 0.6), 250);
+                } catch (e) {}
+            };
+
             const playPaymentSound = () => {
                 playSound(880, 0.1, 'sine', 0.1);
                 setTimeout(() => playSound(1046.5, 0.3, 'sine', 0.1), 100);
@@ -104,22 +132,25 @@
             const playBeepSound = () => playSound(400, 0.5, 'square', 0.05); 
 
             const playAnnouncement = useCallback(() => {
-                const currentStop = config.stops[currentStopIndex] || '';
-                const nextStopName = config.stops[(currentStopIndex + 1) % config.stops.length] || '';
-                const isRequestStop = (name) => name.toLowerCase().includes('(z)') || name.toLowerCase().includes('na znamení');
-                
-                let text = `Zastávka: ${currentStop.replace(/\(z\)/gi, '')}.`;
-                if (isRequestStop(currentStop)) text += " Tato zastávka je na znamení.";
-                text += ` Příští zastávka: ${nextStopName.replace(/\(z\)/gi, '')}.`;
-                if (isRequestStop(nextStopName)) text += " Příští zastávka bude na znamení.";
-                
-                const msg = new SpeechSynthesisUtterance(text);
-                msg.lang = 'cs-CZ';
-                msg.pitch = 0.85; msg.rate = 0.9;
-                const voices = window.speechSynthesis.getVoices();
-                const v = voices.find(v => v.lang.includes('cs') && (v.name.toLowerCase().includes('jakub') || v.name.toLowerCase().includes('matej') || v.name.toLowerCase().includes('male')));
-                if (v) msg.voice = v;
-                window.speechSynthesis.speak(msg);
+                playGong();
+                setTimeout(() => {
+                    const currentStop = config.stops[currentStopIndex] || '';
+                    const nextStopName = config.stops[(currentStopIndex + 1) % config.stops.length] || '';
+                    const isRequestStop = (name) => name.toLowerCase().includes('(z)') || name.toLowerCase().includes('na znamení');
+                    
+                    let text = `Zastávka: ${currentStop.replace(/\(z\)/gi, '')}.`;
+                    if (isRequestStop(currentStop)) text += " Tato zastávka je na znamení.";
+                    text += ` Příští zastávka: ${nextStopName.replace(/\(z\)/gi, '')}.`;
+                    if (isRequestStop(nextStopName)) text += " Příští zastávka bude na znamení.";
+                    
+                    const msg = new SpeechSynthesisUtterance(text);
+                    msg.lang = 'cs-CZ';
+                    msg.pitch = 0.85; msg.rate = 0.9;
+                    const voices = window.speechSynthesis.getVoices();
+                    const v = voices.find(v => v.lang.includes('cs') && (v.name.toLowerCase().includes('jakub') || v.name.toLowerCase().includes('matej') || v.name.toLowerCase().includes('male')));
+                    if (v) msg.voice = v;
+                    window.speechSynthesis.speak(msg);
+                }, 850);
             }, [config.stops, currentStopIndex]);
 
             useEffect(() => {
@@ -187,7 +218,12 @@
                              </div>
                              <h1 className="text-center font-black text-white text-2xl tracking-tighter mb-1 uppercase italic">Synergy OCC</h1>
                              <p className="text-[10px] font-black text-gray-600 uppercase tracking-widest mb-8">Příhlášení / Registrace</p>
-                             <input id="dr-in" type="text" placeholder="Jméno řidiče" className="w-full bg-[#111] p-5 rounded-2xl mb-6 border border-[#333] outline-none font-bold text-white text-center focus:border-emerald-500" onKeyDown={e => e.key === 'Enter' && handleDriverLogin(e.target.value)} />
+                             <div className="w-full space-y-3 mb-6">
+                                <label className="text-[9px] font-black text-gray-500 uppercase px-1">ID Řidiče</label>
+                                <input id="dr-in" type="text" placeholder="Jméno řidiče" className="w-full bg-[#111] p-5 rounded-2xl border border-[#333] outline-none font-bold text-white text-center focus:border-emerald-500" />
+                                <label className="text-[9px] font-black text-gray-500 uppercase px-1">Heslo</label>
+                                <input id="ps-in" type="password" placeholder="••••••••" className="w-full bg-[#111] p-5 rounded-2xl border border-[#333] outline-none font-bold text-white text-center focus:border-emerald-500" onKeyDown={e => e.key === 'Enter' && handleDriverLogin(document.getElementById('dr-in').value)} />
+                             </div>
                              <button onClick={() => handleDriverLogin(document.getElementById('dr-in').value)} className="w-full bg-emerald-600 py-5 rounded-2xl font-black shadow-xl">POTVRDIT SMĚNU</button>
                         </div>
                     </div>
