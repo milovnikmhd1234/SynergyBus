@@ -39,6 +39,12 @@ interface AppConfig {
 }
 
 export default function App() {
+  // Driver state
+  const [driver, setDriver] = useState<{name: string, loginTime: string} | null>(() => {
+    const saved = localStorage.getItem('synergy_driver');
+    return saved ? JSON.parse(saved) : null;
+  });
+
   // Persistence state
   const [config, setConfig] = useState<AppConfig>(() => {
     const saved = localStorage.getItem('synergy_config');
@@ -65,28 +71,30 @@ export default function App() {
   // Settings form state
   const [tempConfig, setTempConfig] = useState<AppConfig>(config);
 
-  const playPaymentSound = () => {
+  const playSound = (freq: number, duration: number, type: OscillatorType = 'sine') => {
     try {
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
       const oscillator = audioCtx.createOscillator();
       const gainNode = audioCtx.createGain();
 
-      oscillator.type = 'sine';
-      oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
-      oscillator.frequency.exponentialRampToValueAtTime(440, audioCtx.currentTime + 0.1);
-
-      gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.2);
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+      
+      gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
 
       oscillator.connect(gainNode);
       gainNode.connect(audioCtx.destination);
 
       oscillator.start();
-      oscillator.stop(audioCtx.currentTime + 0.2);
+      oscillator.stop(audioCtx.currentTime + duration);
     } catch (e) {
-      console.log("Audio context error", e);
+      console.log("Audio error", e);
     }
   };
+
+  const playPaymentSound = () => playSound(880, 0.2);
+  const playBeepSound = () => playSound(600, 0.4, 'square');
 
   useEffect(() => {
     localStorage.setItem('synergy_config', JSON.stringify(config));
@@ -100,6 +108,19 @@ export default function App() {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const handleDriverLogin = (name: string) => {
+    if(!name.trim()) return;
+    const d = { name: name.trim(), loginTime: new Date().toLocaleTimeString('cs-CZ') };
+    setDriver(d);
+    localStorage.setItem('synergy_driver', JSON.stringify(d));
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('synergy_driver');
+    setDriver(null);
+    setShowSettings(false);
+  };
 
   const addToCart = (ticket: TicketType) => {
     setCart(prev => {
@@ -152,6 +173,7 @@ export default function App() {
   };
 
   const nextStop = () => {
+    playBeepSound();
     setCurrentStopIndex(prev => (prev + 1) % config.stops.length);
   };
 
@@ -184,6 +206,50 @@ export default function App() {
     setShowSettings(false);
     setCurrentStopIndex(0);
   };
+
+  // Render Login Screen if no driver
+  if (!driver) {
+    return (
+      <div className="fixed inset-0 bg-[#0d0d0d] flex items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_#1a1a1a_0%,_#000_100%)]">
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="w-full max-w-sm bg-[#161616] p-8 rounded-[3rem] border border-[#222] shadow-2xl flex flex-col items-center"
+        >
+          <div className="w-20 h-20 bg-emerald-600 rounded-3xl flex items-center justify-center mb-6 shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+            <Bus size={40} className="text-white" />
+          </div>
+          <h1 className="text-center font-black text-white text-2xl tracking-tighter mb-1 uppercase">Synergy OCC</h1>
+          <p className="text-[10px] font-black text-gray-600 uppercase tracking-widest mb-8">Příhlášení řidiče</p>
+          
+          <div className="w-full space-y-4">
+            <div>
+              <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block px-1">Profil řidiče</label>
+              <input 
+                id="driver-input"
+                type="text" 
+                placeholder="Zadejte jméno nebo ID"
+                className="w-full bg-[#111] p-5 rounded-2xl border border-[#333] outline-none font-bold text-white focus:border-emerald-500 transition-all text-center"
+                onKeyDown={(e) => e.key === 'Enter' && handleDriverLogin((e.target as HTMLInputElement).value)}
+              />
+            </div>
+            
+            <button 
+              onClick={() => {
+                const val = (document.getElementById('driver-input') as HTMLInputElement).value;
+                handleDriverLogin(val);
+              }}
+              className="w-full bg-emerald-600 hover:bg-emerald-500 py-5 rounded-2xl font-black text-sm shadow-xl active:scale-95 transition-all"
+            >
+              SPUSTIT SYSTÉM
+            </button>
+          </div>
+          
+          <p className="mt-8 text-[9px] text-gray-700 font-bold uppercase tracking-tighter">AI Studio Build v4.2</p>
+        </motion.div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-[#0a0a0a] text-white font-sans selection:bg-emerald-500/30 flex flex-col overflow-hidden touch-none md:touch-auto">
@@ -435,6 +501,18 @@ export default function App() {
               
               <div className="p-6 space-y-6 overflow-y-auto custom-scrollbar">
                 <div className="space-y-4">
+                  <div className="bg-[#222] p-4 rounded-xl border border-[#333] flex items-center justify-between">
+                    <div>
+                      <label className="block text-[8px] font-black text-gray-500 uppercase">Aktuálně přihlášen</label>
+                      <span className="text-xs font-bold text-emerald-500">{driver?.name}</span>
+                    </div>
+                    <button 
+                      onClick={handleLogout}
+                      className="bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-black border border-red-500/20 transition-all uppercase"
+                    >
+                      Odhlásit
+                    </button>
+                  </div>
                   <div>
                     <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Číslo linky</label>
                     <input 
