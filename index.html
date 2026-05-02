@@ -17,7 +17,6 @@
         body { 
             font-family: 'Inter', sans-serif; 
             -webkit-tap-highlight-color: transparent; 
-            touch-action: manipulation;
             background-color: #0d0d0d;
         }
         .font-mono { font-family: 'JetBrains Mono', monospace; }
@@ -33,11 +32,11 @@
         .pulse-active { animation: pulse-green 2s infinite; }
     </style>
 </head>
-<body class="text-white overflow-hidden select-none">
+<body class="text-white overflow-hidden">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useCallback } = React;
+        const { useState, useEffect, useCallback, useRef } = React;
 
         const TICKETS = [
             { id: '1', name: 'Základní 30 min', price: 30, category: 'base', color: 'bg-emerald-600' },
@@ -53,13 +52,11 @@
         ];
 
         function App() {
-            // DRIVER STATE
             const [driver, setDriver] = useState(() => {
                 const saved = localStorage.getItem('synergy_driver');
                 return saved ? JSON.parse(saved) : null;
             });
 
-            // CONFIG STATE
             const [config, setConfig] = useState(() => {
                 const saved = localStorage.getItem('synergy_config');
                 return saved ? JSON.parse(saved) : {
@@ -77,10 +74,11 @@
             const [showSettings, setShowSettings] = useState(false);
             const [showMobileCart, setShowMobileCart] = useState(false);
             const [tempConfig, setTempConfig] = useState(config);
-            const [stopsText, setStopsText] = useState(config.stops.join('\n'));
-            const audioCtxRef = React.useRef(null);
+            const [stopsText, setStopsText] = useState(config.stops.join('>'));
+            
+            const audioCtxRef = useRef(null);
 
-            const playSound = (freq, duration, type = 'sine', volume = 0.05) => {
+            const playSound = (freq, duration, type = 'sine', volume = 0.1) => {
                 try {
                     if (!audioCtxRef.current) {
                         audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -108,24 +106,19 @@
             const playAnnouncement = useCallback(() => {
                 const currentStop = config.stops[currentStopIndex] || '';
                 const nextStopName = config.stops[(currentStopIndex + 1) % config.stops.length] || '';
-                
                 const isRequestStop = (name) => name.toLowerCase().includes('(z)') || name.toLowerCase().includes('na znamení');
                 
                 let text = `Zastávka: ${currentStop.replace(/\(z\)/gi, '')}.`;
                 if (isRequestStop(currentStop)) text += " Tato zastávka je na znamení.";
-                
                 text += ` Příští zastávka: ${nextStopName.replace(/\(z\)/gi, '')}.`;
                 if (isRequestStop(nextStopName)) text += " Příští zastávka bude na znamení.";
                 
                 const msg = new SpeechSynthesisUtterance(text);
                 msg.lang = 'cs-CZ';
-                msg.pitch = 0.82; 
-                msg.rate = 0.9;
-                
+                msg.pitch = 0.85; msg.rate = 0.9;
                 const voices = window.speechSynthesis.getVoices();
-                const maleVoice = voices.find(v => v.lang.includes('cs') && (v.name.toLowerCase().includes('jakub') || v.name.toLowerCase().includes('matej') || v.name.toLowerCase().includes('male')));
-                if (maleVoice) msg.voice = maleVoice;
-                
+                const v = voices.find(v => v.lang.includes('cs') && (v.name.toLowerCase().includes('jakub') || v.name.toLowerCase().includes('matej') || v.name.toLowerCase().includes('male')));
+                if (v) msg.voice = v;
                 window.speechSynthesis.speak(msg);
             }, [config.stops, currentStopIndex]);
 
@@ -141,9 +134,13 @@
 
             const handleDriverLogin = (name) => {
                 if(!name.trim()) return;
-                const newDriver = { name: name.trim(), loginTime: new Date().toLocaleTimeString('cs-CZ') };
-                setDriver(newDriver);
-                localStorage.setItem('synergy_driver', JSON.stringify(newDriver));
+                const d = { name: name.trim(), loginTime: new Date().toLocaleTimeString('cs-CZ') };
+                setDriver(d);
+                localStorage.setItem('synergy_driver', JSON.stringify(d));
+                // Activate audio context on login
+                if (!audioCtxRef.current) {
+                    audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                }
             };
 
             const handleLogout = () => {
@@ -160,9 +157,7 @@
             const addToCart = (ticket) => {
                 setCart(prev => {
                     const existing = prev.find(item => item.id === ticket.id);
-                    if (existing) {
-                        return prev.map(item => item.id === ticket.id ? { ...item, quantity: item.quantity + 1 } : item);
-                    }
+                    if (existing) return prev.map(item => item.id === ticket.id ? { ...item, quantity: item.quantity + 1 } : item);
                     return [...prev, { ...ticket, quantity: 1 }];
                 });
             };
@@ -183,172 +178,98 @@
                 }, 1200);
             };
 
-            // --- RENDER LOGIN SCREEN ---
             if (!driver) {
                 return (
                     <div className="fixed inset-0 bg-[#0d0d0d] flex items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_#1a1a1a_0%,_#000_100%)]">
                         <div className="w-full max-w-sm bg-[#161616] p-8 rounded-[3rem] border border-[#222] shadow-2xl flex flex-col items-center">
-                             <div className="w-20 h-20 bg-emerald-600 rounded-3xl flex items-center justify-center mb-6 shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+                             <div className="w-20 h-20 bg-emerald-600 rounded-3xl flex items-center justify-center mb-6">
                                 <i data-lucide="bus" style={{width: 40, height: 40, color: 'white'}}></i>
                              </div>
-                             <h1 className="text-center font-black text-white text-2xl tracking-tighter mb-1 uppercase">Synergy OCC</h1>
-                             <p className="text-[10px] font-black text-gray-600 uppercase tracking-widest mb-8">Odbavovací systém řidiče</p>
-                             
-                             <label className="text-[10px] font-black text-gray-600 uppercase mb-3 block w-full px-1">Registrace / Přihlášení</label>
-                             <input 
-                                id="driver-name"
-                                type="text"
-                                placeholder="Zadejte jméno řidiče"
-                                className="w-full bg-[#111] p-5 rounded-2xl mb-6 border border-[#333] outline-none font-bold text-white focus:border-emerald-500 transition-all text-center"
-                                onKeyDown={(e) => e.key === 'Enter' && handleDriverLogin(e.target.value)}
-                             />
-                             
-                             <button 
-                                onClick={() => handleDriverLogin(document.getElementById('driver-name').value)}
-                                className="w-full bg-emerald-600 py-5 rounded-2xl font-black text-sm shadow-xl active:scale-95 transition-all"
-                             >
-                                POTVRDIT SMĚNU
-                             </button>
-                             
-                             <p className="mt-8 text-[9px] text-gray-700 font-bold uppercase tracking-tighter">v.4.8.2 build 2024.05</p>
+                             <h1 className="text-center font-black text-white text-2xl tracking-tighter mb-1 uppercase italic">Synergy OCC</h1>
+                             <p className="text-[10px] font-black text-gray-600 uppercase tracking-widest mb-8">Příhlášení / Registrace</p>
+                             <input id="dr-in" type="text" placeholder="Jméno řidiče" className="w-full bg-[#111] p-5 rounded-2xl mb-6 border border-[#333] outline-none font-bold text-white text-center focus:border-emerald-500" onKeyDown={e => e.key === 'Enter' && handleDriverLogin(e.target.value)} />
+                             <button onClick={() => handleDriverLogin(document.getElementById('dr-in').value)} className="w-full bg-emerald-600 py-5 rounded-2xl font-black shadow-xl">POTVRDIT SMĚNU</button>
                         </div>
                     </div>
                 );
             }
 
-            // --- RENDER MAIN INTERFACE ---
             return (
                 <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#0d0d0d]">
-                    {/* Header */}
                     <header className="h-14 bg-[#1a1a1a] border-b border-[#222] flex items-center justify-between px-3 flex-shrink-0 z-50">
                         <div className="flex items-center gap-2">
                             <div className="bg-emerald-600 px-2 py-1 rounded font-black text-lg">{config.lineNumber}</div>
-                            <div className="flex flex-col">
-                                <span className="text-[7px] text-gray-500 font-bold">KAPITÁN: {driver.name.toUpperCase()}</span>
-                                <span className="text-xs font-bold truncate max-w-[120px]">{config.destination}</span>
-                            </div>
+                            <div className="flex flex-col"><span className="text-[7px] text-gray-500 font-bold uppercase">ŘID: {driver.name}</span><span className="text-xs font-bold truncate max-w-[120px]">{config.destination}</span></div>
                         </div>
-                        <div className="text-lg font-mono font-black text-emerald-500">
-                            {currentTime.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                        <button onClick={() => { setTempConfig(config); setStopsText(config.stops.join('\n')); setShowSettings(true); }} className="w-10 h-10 rounded-xl bg-[#222] flex items-center justify-center text-gray-400 active:bg-emerald-600">
-                            <i data-lucide="settings" style={{width: 18}}></i>
-                        </button>
+                        <div className="text-lg font-mono font-black text-emerald-500">{currentTime.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}</div>
+                        <button onClick={() => { setTempConfig(config); setStopsText(config.stops.join('>')); setShowSettings(true); }} className="w-10 h-10 rounded-xl bg-[#222] flex items-center justify-center text-gray-400 active:bg-emerald-600"><i data-lucide="settings" style={{width: 18}}></i></button>
                     </header>
 
-                    {/* AUDIO ACTIVATION OVERLAY */}
-                    {!audioCtxRef.current && (
-                        <div 
-                            onClick={() => {
-                                audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
-                                audioCtxRef.current.resume();
-                            }}
-                            className="fixed inset-0 z-0"
-                        />
-                    )}
+                    {/* AUDIO ACTIVATION OVERLAY (Needed for sound on mobile) */}
+                    {!audioCtxRef.current && <div onClick={() => { audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)(); audioCtxRef.current.resume(); }} className="fixed inset-0 z-0" />}
 
-                    {/* Zastávka Bar */}
-                    <div className="bg-black/80 px-3 py-2 border-b border-[#222] flex items-center justify-between text-xs font-bold text-emerald-400 shadow-xl">
-                        <div className="flex items-center gap-3">
-                            <button onClick={playAnnouncement} className="w-8 h-8 bg-emerald-500/10 rounded-full flex items-center justify-center pulse-active">
-                                <i data-lucide="volume-2" style={{width: 14}}></i>
-                            </button>
-                            <div className="flex flex-col">
-                                <span className="text-[7px] text-gray-600 uppercase">Aktuální stanice</span>
-                                <span className="truncate">{config.stops[currentStopIndex]}</span>
-                            </div>
+                    <div className="bg-black/80 px-3 py-2 border-b border-[#222] flex items-center justify-between text-xs font-bold text-emerald-400">
+                        <div className="flex items-center gap-3 overflow-hidden">
+                            <button onClick={playAnnouncement} className="w-8 h-8 bg-emerald-500/10 rounded-full flex items-center justify-center pulse-active flex-shrink-0"><i data-lucide="volume-2" style={{width: 14}}></i></button>
+                            <div className="flex flex-col truncate leading-tight"><span className="text-[7px] text-gray-600 uppercase font-black">Aktuální zastávka</span><span className="truncate">{config.stops[currentStopIndex]}</span></div>
                         </div>
-                        <button onClick={nextStop} className="bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black shadow-lg shadow-emerald-500/20 active:scale-90 transition-transform">ODJEZD</button>
+                        <button onClick={nextStop} className="bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-[10px] font-black active:scale-95 transition-transform">ODJEZD</button>
                     </div>
 
-                    <main className="flex-1 flex overflow-hidden">
-                        <section className="flex-1 p-2 overflow-y-auto custom-scrollbar pb-24">
-                            <div className="grid grid-cols-2 gap-2">
-                                {TICKETS.map(t => (
-                                    <button onClick={() => addToCart(t)} key={t.id} className={`${t.color} p-3 rounded-2xl h-24 text-left flex flex-col justify-between border border-white/5 active:scale-95 transition-transform shadow-lg`}>
-                                        <div className="font-bold text-xs leading-tight pr-4">{t.name}</div>
-                                        <div className="text-right text-xl font-black">{t.price} <small className="text-[10px] font-normal opacity-70">Kč</small></div>
-                                    </button>
-                                ))}
-                            </div>
-                        </section>
+                    <main className="flex-1 overflow-y-auto p-2 custom-scrollbar pb-24">
+                        <div className="grid grid-cols-2 gap-2">
+                            {TICKETS.map(t => (
+                                <button key={t.id} onClick={() => addToCart(t)} className={`${t.color} p-3 rounded-2xl h-24 text-left flex flex-col justify-between border border-white/5 active:scale-95 transition-transform shadow-lg`}>
+                                    <div className="font-bold text-xs leading-tight pr-4">{t.name}</div>
+                                    <div className="text-right text-xl font-black">{t.price} <small className="text-[10px] font-normal opacity-70">Kč</small></div>
+                                </button>
+                            ))}
+                        </div>
                     </main>
 
-                    <footer className="md:hidden h-16 bg-[#1a1a1a] border-t border-[#222] flex items-center px-3 gap-2 flex-shrink-0 shadow-[0_-10px_20px_rgba(0,0,0,0.5)]">
-                        <button onClick={() => setShowMobileCart(true)} className="flex-1 bg-emerald-600 h-12 rounded-2xl flex items-center justify-center font-black relative active:scale-95 transition-all">
-                            <i data-lucide="shopping-cart" style={{width: 18, marginRight: 8}}></i>
+                    <footer className="h-16 bg-[#1a1a1a] border-t border-[#222] flex items-center px-3 gap-2 flex-shrink-0 shadow-2xl">
+                        <button onClick={() => setShowMobileCart(true)} className="flex-1 bg-emerald-600 h-11 rounded-xl flex items-center justify-center font-black relative active:scale-95 transition-all">
                             KOŠÍK {cart.length > 0 && <span className="ml-2 bg-white text-emerald-600 w-5 h-5 rounded-full text-[10px] flex items-center justify-center border-2 border-emerald-600">{cart.length}</span>}
                         </button>
-                        <div className="bg-[#222] h-12 px-4 rounded-xl flex items-center font-black text-emerald-500 border border-[#333] min-w-[80px] justify-center">{total} Kč</div>
+                        <div className="bg-[#222] h-11 px-4 rounded-xl flex items-center font-black text-emerald-500 border border-[#333] min-w-[70px] justify-center">{total} Kč</div>
                     </footer>
 
-                    {/* Modals & Overlays (Mobile Cart, Settings, Payment) */}
                     {showMobileCart && (
-                        <div className="md:hidden fixed inset-0 bg-black/98 z-[100] flex flex-col">
-                            <header className="p-4 border-b border-[#222] flex justify-between items-center bg-[#1a1a1a]">
-                                <span className="font-black text-sm tracking-widest text-emerald-500 uppercase">Detail prodeje</span>
-                                <button onClick={() => setShowMobileCart(false)} className="bg-[#333] w-10 h-10 rounded-xl flex items-center justify-center">X</button>
-                            </header>
+                        <div className="fixed inset-0 bg-black/98 z-[100] flex flex-col">
+                            <header className="p-4 border-b border-[#222] flex justify-between items-center bg-[#1a1a1a]"><span className="font-black text-emerald-500 uppercase text-sm">Nákupní seznam</span><button onClick={() => setShowMobileCart(false)} className="bg-[#333] w-10 h-10 rounded-xl">X</button></header>
                             <div className="flex-1 p-4 space-y-3 overflow-y-auto">
-                                {cart.length === 0 ? <p className="text-center mt-20 text-gray-700 font-black">KOŠÍK JE PRÁZDNÝ</p> : cart.map(item => (
+                                {cart.map(item => (
                                     <div key={item.id} className="bg-[#1a1a1a] p-4 rounded-2xl flex justify-between border border-[#222]">
-                                        <div><div className="font-bold text-xs">{item.name}</div><div className="text-emerald-500 font-black text-xl">{item.quantity}x icon</div></div>
-                                        <div className="font-black text-2xl">{item.price * item.quantity} Kč</div>
+                                        <div><div className="font-bold text-xs">{item.name}</div><div className="text-emerald-500 font-black">{item.quantity}x</div></div>
+                                        <div className="font-black text-xl">{item.price * item.quantity} Kč</div>
                                     </div>
                                 ))}
                             </div>
-                            <div className="p-8 bg-[#111] border-t border-[#222] rounded-t-[3rem] shadow-2xl">
-                                <div className="flex justify-between mb-6 items-end"><span className="font-bold text-gray-600 uppercase text-xs">Cena celkem</span><span className="text-4xl font-black text-emerald-500 leading-none">{total} Kč</span></div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button onClick={handlePayment} disabled={total === 0} className="bg-[#222] border border-[#333] p-6 rounded-2xl flex flex-col items-center gap-2 font-black text-[10px] active:bg-emerald-600 disabled:opacity-20"><i data-lucide="banknote"></i>HOTOVOST</button>
-                                    <button onClick={handlePayment} disabled={total === 0} className="bg-[#222] border border-[#333] p-6 rounded-2xl flex flex-col items-center gap-2 font-black text-[10px] active:bg-sky-600 disabled:opacity-20"><i data-lucide="credit-card"></i>KARTA</button>
-                                </div>
-                            </div>
+                            <div className="p-8 bg-[#111] border-t border-[#222] rounded-t-[3rem]"><div className="flex justify-between mb-4 items-end"><span className="font-bold text-gray-500 text-xs">CELKEM</span><span className="text-4xl font-black text-emerald-500 leading-none">{total} Kč</span></div><button onClick={handlePayment} className="w-full bg-emerald-600 py-5 rounded-2xl font-black shadow-xl active:scale-95 transition-all">ZAPLATIT</button></div>
                         </div>
                     )}
 
                     {showSettings && (
                         <div className="fixed inset-0 bg-black/98 z-[110] flex items-center justify-center p-4">
-                            <div className="bg-[#161616] w-full max-w-sm rounded-[3rem] border border-[#333] h-[85vh] flex flex-col shadow-2xl overflow-hidden">
-                                <div className="p-6 border-b border-[#333] flex justify-between items-center text-[10px] font-black uppercase text-gray-500 tracking-widest">
-                                    Konfigurace linky 
-                                    <button onClick={() => setShowSettings(false)} className="w-8 h-8 rounded-full bg-[#222] flex items-center justify-center">X</button>
-                                </div>
+                            <div className="bg-[#161616] w-full max-w-sm rounded-[3rem] border border-[#333] flex flex-col h-[85vh] shadow-2xl overflow-hidden">
+                                <div className="p-5 border-b border-[#333] flex justify-between items-center text-[10px] font-black uppercase text-gray-600 tracking-widest">Nastavení trasy <button onClick={() => setShowSettings(false)}>X</button></div>
                                 <div className="p-6 space-y-5 overflow-y-auto flex-1 custom-scrollbar">
-                                    <div><label className="text-[9px] text-gray-600 font-black block mb-1 uppercase">Číslo linky</label><input className="w-full bg-[#111] p-4 rounded-2xl font-black text-emerald-500 border border-[#222] outline-none" value={tempConfig.lineNumber} onChange={e => setTempConfig({...tempConfig, lineNumber: e.target.value})} /></div>
-                                    <div><label className="text-[9px] text-gray-600 font-black block mb-1 uppercase">Cílová stanice</label><input className="w-full bg-[#111] p-4 rounded-2xl font-bold border border-[#222] outline-none" value={tempConfig.destination} onChange={e => setTempConfig({...tempConfig, destination: e.target.value})} /></div>
+                                    <div><label className="text-[9px] text-gray-600 font-black block mb-1 uppercase">Linka</label><input className="w-full bg-[#111] p-4 rounded-2xl font-black text-emerald-500 border border-[#222] outline-none shadow-inner" value={tempConfig.lineNumber} onChange={e => setTempConfig({...tempConfig, lineNumber: e.target.value})} /></div>
+                                    <div><label className="text-[9px] text-gray-600 font-black block mb-1 uppercase">Cíl</label><input className="w-full bg-[#111] p-4 rounded-2xl font-bold border border-[#222] outline-none shadow-inner" value={tempConfig.destination} onChange={e => setTempConfig({...tempConfig, destination: e.target.value})} /></div>
                                     <div>
-                                        <div className="flex justify-between items-center mb-1">
-                                            <label className="text-[9px] text-gray-600 font-black uppercase">Seznam zastávek</label>
-                                            <span className="text-[8px] text-gray-700 italic font-bold uppercase">(každá na nový řádek)</span>
-                                        </div>
-                                        <textarea 
-                                            className="w-full bg-[#111] p-4 rounded-2xl text-[11px] font-medium border border-[#222] outline-none h-44 leading-relaxed custom-scrollbar" 
-                                            value={stopsText} 
-                                            onChange={e => setStopsText(e.target.value)} 
-                                            placeholder="Např:&#10;Hlavní nádraží&#10;Česká (z)"
-                                        />
-                                        <p className="text-[8px] text-gray-700 mt-2 px-1">Tip: Pro zastávku na znamení dopiš <b>(z)</b> k názvu.</p>
+                                        <label className="text-[9px] text-gray-600 font-black block mb-1 uppercase">Zastávky (oddělovač >)</label>
+                                        <textarea className="w-full bg-[#111] p-4 rounded-2xl text-[11px] font-medium border border-[#222] outline-none h-44 leading-relaxed shadow-inner" value={stopsText} onChange={e => setStopsText(e.target.value)} placeholder="Zastávka1>Zastávka2>..." />
+                                        <p className="text-[8px] text-gray-700 mt-2 italic px-1">* Názvy oddělujte znakem {'>'} bez mezer (např. Divadlo{'>'}Brno{'>'}Ostrava).</p>
                                     </div>
-                                    
-                                    <div className="pt-4 mt-4 border-t border-[#222]">
-                                        <button onClick={handleLogout} className="w-full bg-red-600/10 text-red-600 py-4 rounded-2xl font-black text-[10px] border border-red-600/20 active:bg-red-600 active:text-white transition-all uppercase">
-                                            Odhlásit řidiče: {driver.name}
-                                        </button>
-                                    </div>
+                                    <button onClick={handleLogout} className="w-full mt-4 bg-red-600/10 text-red-500 py-4 rounded-2xl font-black text-[10px] border border-red-600/20 active:bg-red-600 active:text-white transition-all uppercase">Odhlásit řidiče: {driver.name}</button>
                                 </div>
-                                <div className="p-4 bg-black/40"><button onClick={() => { 
-                                    const finalStops = stopsText.split('\n').map(s=>s.trim()).filter(Boolean);
-                                    setConfig({...tempConfig, stops: finalStops}); 
-                                    setShowSettings(false); 
-                                    setCurrentStopIndex(0); 
-                                }} className="w-full bg-emerald-600 py-5 rounded-2xl font-black uppercase text-xs shadow-xl active:scale-95 transition-transform">Uložit a synchronizovat</button></div>
+                                <div className="p-4 bg-black/40"><button onClick={() => { const s = stopsText.split('>').map(x=>x.trim()).filter(Boolean); setConfig({...tempConfig, stops: s}); setShowSettings(false); setCurrentStopIndex(0); }} className="w-full bg-emerald-600 py-5 rounded-2xl font-black uppercase text-xs shadow-xl active:scale-95 transition-transform">Uložit a synchronizovat</button></div>
                             </div>
                         </div>
                     )}
 
-                    {isPaying && <div className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center font-black animate-pulse text-emerald-500 tracking-[0.2em]">AUTORIZACE...</div>}
-                    {paymentSuccess && <div className="fixed top-0 left-0 right-0 bg-emerald-500 z-[210] p-5 text-center font-black text-sm shadow-2xl uppercase tracking-widest">Tisk jízdenky...</div>}
+                    {isPaying && <div className="fixed inset-0 bg-black/90 z-[200] flex items-center justify-center font-black animate-pulse text-emerald-500 uppercase tracking-widest text-xs">Autorizace...</div>}
+                    {paymentSuccess && <div className="fixed top-0 left-0 right-0 bg-emerald-500 z-[210] p-5 text-center font-black text-sm uppercase tracking-widest">Tisk jízdenky...</div>}
                 </div>
             );
         }

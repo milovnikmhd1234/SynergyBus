@@ -220,7 +220,7 @@ export default function App() {
   };
 
   const saveSettings = () => {
-    const finalStops = stopsText.split('\n').map(s => s.trim()).filter(Boolean);
+    const finalStops = stopsText.split('>').map(s => s.trim()).filter(Boolean);
     const finalConfig = { ...tempConfig, stops: finalStops };
     setConfig(finalConfig);
     setShowSettings(false);
@@ -272,7 +272,7 @@ export default function App() {
   }
 
   return (
-    <div className="fixed inset-0 bg-[#0a0a0a] text-white font-sans selection:bg-emerald-500/30 flex flex-col overflow-hidden touch-none md:touch-auto">
+    <div className="fixed inset-0 bg-[#0a0a0a] text-white font-sans selection:bg-emerald-500/30 flex flex-col overflow-hidden md:touch-auto">
       {/* --- TOP STATUS BAR --- */}
       <header className="h-14 md:h-16 bg-[#161616] border-b border-[#222] flex items-center justify-between px-3 md:px-4 shadow-xl z-30 shrink-0">
         <div className="flex items-center gap-2 md:gap-4">
@@ -308,7 +308,7 @@ export default function App() {
           <button 
             onClick={() => {
               setTempConfig(config);
-              setStopsText(config.stops.join('\n'));
+              setStopsText(config.stops.join('>'));
               setShowSettings(true);
             }}
             className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-[#222] flex items-center justify-center text-gray-400 hover:text-white cursor-pointer transition-all border border-[#333] active:scale-90"
@@ -564,14 +564,14 @@ export default function App() {
                     />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Zastávky (každá na nový řádek)</label>
+                    <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Zastávky (oddělené znakem &gt;)</label>
                     <textarea 
                       value={stopsText}
                       onChange={e => setStopsText(e.target.value)}
-                      placeholder="Např:&#10;Hlavní nádraží&#10;Náměstí Svobody (z)"
+                      placeholder="Např: Hlavní nádraží>Česká>Technologický park"
                       className="w-full bg-[#222] border border-[#333] rounded-lg p-3 text-gray-300 text-xs outline-none focus:border-emerald-500 h-32 leading-relaxed"
                     />
-                    <p className="text-[9px] text-gray-600 mt-1 italic">* Pro zastávku na znamení přidej k názvu (z)</p>
+                    <p className="text-[9px] text-gray-600 mt-1 italic">* Názvy odděluj pomocí {'>'} (např. Divadlo{'>'}Kino)</p>
                   </div>
                 </div>
 
