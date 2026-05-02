@@ -77,23 +77,33 @@
             const [showSettings, setShowSettings] = useState(false);
             const [showMobileCart, setShowMobileCart] = useState(false);
             const [tempConfig, setTempConfig] = useState(config);
+            const [stopsText, setStopsText] = useState(config.stops.join('\n'));
+            const audioCtxRef = React.useRef(null);
 
-            const playSound = (freq, duration, type = 'sine') => {
+            const playSound = (freq, duration, type = 'sine', volume = 0.05) => {
                 try {
-                    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                    if (!audioCtxRef.current) {
+                        audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                    }
+                    const ctx = audioCtxRef.current;
+                    if (ctx.state === 'suspended') ctx.resume();
+
                     const osc = ctx.createOscillator();
                     const gain = ctx.createGain();
                     osc.type = type;
                     osc.frequency.setValueAtTime(freq, ctx.currentTime);
-                    gain.gain.setValueAtTime(0.05, ctx.currentTime);
+                    gain.gain.setValueAtTime(volume, ctx.currentTime);
                     gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
                     osc.connect(gain); gain.connect(ctx.destination);
                     osc.start(); osc.stop(ctx.currentTime + duration);
                 } catch (e) {}
             };
 
-            const playPaymentSound = () => playSound(880, 0.2);
-            const playBeepSound = () => playSound(600, 0.4, 'square'); 
+            const playPaymentSound = () => {
+                playSound(880, 0.1, 'sine', 0.1);
+                setTimeout(() => playSound(1046.5, 0.3, 'sine', 0.1), 100);
+            };
+            const playBeepSound = () => playSound(400, 0.5, 'square', 0.05); 
 
             const playAnnouncement = useCallback(() => {
                 const currentStop = config.stops[currentStopIndex] || '';
@@ -221,10 +231,21 @@
                         <div className="text-lg font-mono font-black text-emerald-500">
                             {currentTime.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}
                         </div>
-                        <button onClick={() => { setTempConfig(config); setShowSettings(true); }} className="w-10 h-10 rounded-xl bg-[#222] flex items-center justify-center text-gray-400 active:bg-emerald-600">
+                        <button onClick={() => { setTempConfig(config); setStopsText(config.stops.join('\n')); setShowSettings(true); }} className="w-10 h-10 rounded-xl bg-[#222] flex items-center justify-center text-gray-400 active:bg-emerald-600">
                             <i data-lucide="settings" style={{width: 18}}></i>
                         </button>
                     </header>
+
+                    {/* AUDIO ACTIVATION OVERLAY */}
+                    {!audioCtxRef.current && (
+                        <div 
+                            onClick={() => {
+                                audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                                audioCtxRef.current.resume();
+                            }}
+                            className="fixed inset-0 z-0"
+                        />
+                    )}
 
                     {/* Zastávka Bar */}
                     <div className="bg-black/80 px-3 py-2 border-b border-[#222] flex items-center justify-between text-xs font-bold text-emerald-400 shadow-xl">
@@ -303,8 +324,8 @@
                                         </div>
                                         <textarea 
                                             className="w-full bg-[#111] p-4 rounded-2xl text-[11px] font-medium border border-[#222] outline-none h-44 leading-relaxed custom-scrollbar" 
-                                            value={tempConfig.stops.join('\n')} 
-                                            onChange={e => setTempConfig({...tempConfig, stops: e.target.value.split('\n').map(s=>s.trim()).filter(Boolean)})} 
+                                            value={stopsText} 
+                                            onChange={e => setStopsText(e.target.value)} 
                                             placeholder="Např:&#10;Hlavní nádraží&#10;Česká (z)"
                                         />
                                         <p className="text-[8px] text-gray-700 mt-2 px-1">Tip: Pro zastávku na znamení dopiš <b>(z)</b> k názvu.</p>
@@ -316,7 +337,12 @@
                                         </button>
                                     </div>
                                 </div>
-                                <div className="p-4 bg-black/40"><button onClick={() => { setConfig(tempConfig); setShowSettings(false); setCurrentStopIndex(0); }} className="w-full bg-emerald-600 py-5 rounded-2xl font-black uppercase text-xs shadow-xl active:scale-95 transition-transform">Uložit a synchronizovat</button></div>
+                                <div className="p-4 bg-black/40"><button onClick={() => { 
+                                    const finalStops = stopsText.split('\n').map(s=>s.trim()).filter(Boolean);
+                                    setConfig({...tempConfig, stops: finalStops}); 
+                                    setShowSettings(false); 
+                                    setCurrentStopIndex(0); 
+                                }} className="w-full bg-emerald-600 py-5 rounded-2xl font-black uppercase text-xs shadow-xl active:scale-95 transition-transform">Uložit a synchronizovat</button></div>
                             </div>
                         </div>
                     )}

@@ -55,6 +55,7 @@ export default function App() {
     };
   });
 
+  // Navigation state
   const [cart, setCart] = useState<CartItem[]>([]);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [currentStopIndex, setCurrentStopIndex] = useState(0);
@@ -63,38 +64,55 @@ export default function App() {
   const [showHistory, setShowHistory] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showMobileCart, setShowMobileCart] = useState(false);
+  
+  // Audio system ref
+  const audioCtxRef = React.useRef<AudioContext | null>(null);
+
   const [transactionHistory, setTransactionHistory] = useState<{ id: string; total: number; time: string }[]>(() => {
     const saved = localStorage.getItem('synergy_history');
     return saved ? JSON.parse(saved) : [];
   });
 
-  // Settings form state
+  // Settings form state (using raw string for stops to allow easy editing)
   const [tempConfig, setTempConfig] = useState<AppConfig>(config);
+  const [stopsText, setStopsText] = useState<string>('');
 
-  const playSound = (freq: number, duration: number, type: OscillatorType = 'sine') => {
+  const playSound = (freq: number, duration: number, type: OscillatorType = 'sine', volume = 0.1) => {
     try {
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const oscillator = audioCtx.createOscillator();
-      const gainNode = audioCtx.createGain();
+      if (!audioCtxRef.current) {
+        audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      }
+      
+      const ctx = audioCtxRef.current;
+      if (ctx.state === 'suspended') {
+        ctx.resume();
+      }
+
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
 
       oscillator.type = type;
-      oscillator.frequency.setValueAtTime(freq, audioCtx.currentTime);
+      oscillator.frequency.setValueAtTime(freq, ctx.currentTime);
       
-      gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+      gainNode.gain.setValueAtTime(volume, ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
 
       oscillator.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
+      gainNode.connect(ctx.destination);
 
       oscillator.start();
-      oscillator.stop(audioCtx.currentTime + duration);
+      oscillator.stop(ctx.currentTime + duration);
     } catch (e) {
       console.log("Audio error", e);
     }
   };
 
-  const playPaymentSound = () => playSound(880, 0.2);
-  const playBeepSound = () => playSound(600, 0.4, 'square');
+  const playPaymentSound = () => {
+    playSound(880, 0.1, 'sine', 0.1);
+    setTimeout(() => playSound(1046.5, 0.3, 'sine', 0.1), 100);
+  };
+  
+  const playBeepSound = () => playSound(400, 0.5, 'square', 0.05);
 
   useEffect(() => {
     localStorage.setItem('synergy_config', JSON.stringify(config));
@@ -202,7 +220,9 @@ export default function App() {
   };
 
   const saveSettings = () => {
-    setConfig(tempConfig);
+    const finalStops = stopsText.split('\n').map(s => s.trim()).filter(Boolean);
+    const finalConfig = { ...tempConfig, stops: finalStops };
+    setConfig(finalConfig);
     setShowSettings(false);
     setCurrentStopIndex(0);
   };
@@ -288,6 +308,7 @@ export default function App() {
           <button 
             onClick={() => {
               setTempConfig(config);
+              setStopsText(config.stops.join('\n'));
               setShowSettings(true);
             }}
             className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-[#222] flex items-center justify-center text-gray-400 hover:text-white cursor-pointer transition-all border border-[#333] active:scale-90"
@@ -296,6 +317,17 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      {/* --- AUDIO ACTIVATION OVERLAY (Crucial for mobile) --- */}
+      {!audioCtxRef.current && (
+        <div 
+          onClick={() => {
+            audioCtxRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+            audioCtxRef.current.resume();
+          }}
+          className="fixed inset-0 z-0"
+        />
+      )}
 
       {/* --- MOBILE STOP INFO --- */}
       <div className="md:hidden bg-black/60 px-3 py-2 border-b border-[#222] flex items-center justify-between">
@@ -534,8 +566,8 @@ export default function App() {
                   <div>
                     <label className="block text-[10px] font-black text-gray-500 uppercase mb-1">Zastávky (každá na nový řádek)</label>
                     <textarea 
-                      value={tempConfig.stops.join('\n')}
-                      onChange={e => setTempConfig({...tempConfig, stops: e.target.value.split('\n').map(s => s.trim()).filter(Boolean)})}
+                      value={stopsText}
+                      onChange={e => setStopsText(e.target.value)}
                       placeholder="Např:&#10;Hlavní nádraží&#10;Náměstí Svobody (z)"
                       className="w-full bg-[#222] border border-[#333] rounded-lg p-3 text-gray-300 text-xs outline-none focus:border-emerald-500 h-32 leading-relaxed"
                     />
