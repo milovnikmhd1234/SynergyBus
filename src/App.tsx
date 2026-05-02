@@ -14,7 +14,7 @@ import {
   CheckCircle2, 
   Clock, 
   MapPin, 
-  User, 
+  User as UserIcon, 
   Bus, 
   History,
   Settings as SettingsIcon,
@@ -24,9 +24,36 @@ import {
   Plus,
   Save,
   ShoppingCart,
-  Volume2
+  Volume2,
+  LogIn,
+  LogOut,
+  Mail,
+  ShieldCheck
 } from 'lucide-react';
 import { TICKETS, STOPS, LINE_INFO, TicketType } from './constants';
+import { auth, db, googleProvider, OperationType, handleFirestoreError } from './firebase';
+import { 
+  signInWithPopup, 
+  onAuthStateChanged, 
+  signOut, 
+  User, 
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
+} from 'firebase/auth';
+import { 
+  doc, 
+  getDoc, 
+  setDoc, 
+  serverTimestamp, 
+  collection, 
+  addDoc, 
+  query, 
+  where, 
+  getDocs,
+  onSnapshot,
+  orderBy,
+  limit
+} from 'firebase/firestore';
 
 interface CartItem extends TicketType {
   quantity: number;
@@ -38,12 +65,18 @@ interface AppConfig {
   stops: string[];
 }
 
+interface DriverProfile {
+  name: string;
+  role: 'driver' | 'admin';
+  isApproved: boolean;
+}
+
 export default function App() {
-  // Driver state
-  const [driver, setDriver] = useState<{name: string, loginTime: string} | null>(() => {
-    const saved = localStorage.getItem('synergy_driver');
-    return saved ? JSON.parse(saved) : null;
-  });
+  // Firebase Auth State
+  const [user, setUser] = useState<User | null>(null);
+  const [driverProfile, setDriverProfile] = useState<DriverProfile | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginError, setLoginError] = useState<string | null>(null);
 
   // Persistence state
   const [config, setConfig] = useState<AppConfig>(() => {
@@ -68,14 +101,72 @@ export default function App() {
   // Audio system ref
   const audioCtxRef = React.useRef<AudioContext | null>(null);
 
-  const [transactionHistory, setTransactionHistory] = useState<{ id: string; total: number; time: string }[]>(() => {
-    const saved = localStorage.getItem('synergy_history');
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [transactionHistory, setTransactionHistory] = useState<{ id: string; total: number; time: string }[]>([]);
 
-  // Settings form state (using raw string for stops to allow easy editing)
+  // Settings form state
   const [tempConfig, setTempConfig] = useState<AppConfig>(config);
   const [stopsText, setStopsText] = useState<string>('');
+
+  // Authentication Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setUser(user);
+      if (user) {
+        try {
+          const docRef = doc(db, 'drivers', user.uid);
+          const docSnap = await getDoc(docRef);
+          
+          if (docSnap.exists()) {
+            const data = docSnap.data() as DriverProfile;
+            if (data.isApproved) {
+              setDriverProfile(data);
+              setLoginError(null);
+              playGong();
+            } else {
+              setDriverProfile(null);
+              setLoginError('Váš účet čeká na schválení administrátorem.');
+            }
+          } else {
+            // User is authenticated but not registered in drivers collection
+            setDriverProfile(null);
+            setLoginError('Nejste v systému registrován jako řidič. Kontaktujte dispečink.');
+          }
+        } catch (error) {
+          console.error("Error fetching driver profile:", error);
+          setLoginError('Chyba při načítání profilu.');
+        }
+      } else {
+        setDriverProfile(null);
+      }
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Sync transaction history from Firestore
+  useEffect(() => {
+    if (!user || !driverProfile) return;
+
+    const q = query(
+      collection(db, 'transactions'),
+      where('driverId', '==', user.uid),
+      orderBy('timestamp', 'desc'),
+      limit(50)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const history = snapshot.docs.map(doc => ({
+        id: doc.id,
+        total: doc.data().total,
+        time: doc.data().timestamp?.toDate()?.toLocaleString('cs-CZ') || 'Právě teď'
+      }));
+      setTransactionHistory(history);
+    }, (error) => {
+      handleFirestoreError(error, OperationType.LIST, 'transactions');
+    });
+
+    return () => unsubscribe();
+  }, [user, driverProfile]);
 
   const playSound = (freq: number, duration: number, type: OscillatorType = 'sine', volume = 0.1) => {
     try {
@@ -155,17 +246,24 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  const handleDriverLogin = (name: string) => {
-    if(!name.trim()) return;
-    const d = { name: name.trim(), loginTime: new Date().toLocaleTimeString('cs-CZ') };
-    setDriver(d);
-    localStorage.setItem('synergy_driver', JSON.stringify(d));
+  const handleGoogleLogin = async () => {
+    setLoginError(null);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (error) {
+      console.error("Login error:", error);
+      setLoginError('Přihlášení přes Google selhalo.');
+    }
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('synergy_driver');
-    setDriver(null);
-    setShowSettings(false);
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setDriverProfile(null);
+      setShowSettings(false);
+    } catch (e) {
+      console.error("Logout error", e);
+    }
   };
 
   const addToCart = (ticket: TicketType) => {
@@ -197,25 +295,42 @@ export default function App() {
 
   const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
-  const handlePayment = (method: 'cash' | 'card') => {
+  const handlePayment = async (method: 'cash' | 'card') => {
+    if (!user) return;
     setIsPaying(true);
-    setTimeout(() => {
+    try {
+      // Simulate bank delay
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      const transactionData = {
+        driverId: user.uid,
+        driverName: driverProfile?.name || user.displayName || 'Neznámý',
+        total,
+        method,
+        timestamp: serverTimestamp(),
+        items: cart.map(item => ({
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity
+        }))
+      };
+
+      const path = 'transactions';
+      await addDoc(collection(db, path), transactionData);
+      
       setIsPaying(false);
       setPaymentSuccess(true);
       playPaymentSound();
-      const newTransaction = {
-        id: Math.random().toString(36).substr(2, 9).toUpperCase(),
-        total,
-        time: new Date().toLocaleString('cs-CZ'),
-      };
-      setTransactionHistory(prev => [newTransaction, ...prev].slice(0, 50));
       
       setTimeout(() => {
         setPaymentSuccess(false);
         clearCart();
         setShowMobileCart(false);
       }, 2000);
-    }, 1500);
+    } catch (error) {
+      setIsPaying(false);
+      handleFirestoreError(error, OperationType.CREATE, 'transactions');
+    }
   };
 
   const nextStop = () => {
@@ -260,10 +375,90 @@ export default function App() {
     setCurrentStopIndex(0);
   };
 
-  // Render Login Screen if no driver
-  if (!driver) {
+  // --- LOGIN SCREEN ---
+  if (authLoading) {
     return (
-      <div className="fixed inset-0 bg-[#0d0d0d] flex items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_#1a1a1a_0%,_#000_100%)]">
+      <div className="fixed inset-0 bg-[#0d0d0d] flex items-center justify-center p-6">
+        <motion.div 
+          animate={{ rotate: 360 }}
+          transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
+          className="w-12 h-12 border-4 border-emerald-500/20 border-t-emerald-500 rounded-full"
+        />
+      </div>
+    );
+  }
+
+  const RegisterSection = () => {
+    const [regName, setRegName] = useState('');
+    const [regEmail, setRegEmail] = useState('');
+    const [regPass, setRegPass] = useState('');
+    const [isRegistering, setIsRegistering] = useState(false);
+    const [regError, setRegError] = useState<string | null>(null);
+
+    const handleRegister = async () => {
+      if (!regName || !regEmail || !regPass) return;
+      setIsRegistering(true);
+      setRegError(null);
+      try {
+        const userCred = await createUserWithEmailAndPassword(auth, regEmail, regPass);
+        // Create pending driver profile
+        await setDoc(doc(db, 'drivers', userCred.user.uid), {
+          userId: userCred.user.uid,
+          name: regName,
+          email: regEmail,
+          role: 'driver',
+          isApproved: false,
+          createdAt: serverTimestamp()
+        });
+        playGong();
+        // Success - auth listener will update but docSnap will show isApproved: false
+      } catch (err: any) {
+        setRegError(err.message || 'Chyba při registraci.');
+      } finally {
+        setIsRegistering(false);
+      }
+    };
+
+    return (
+      <div className="space-y-3 w-full mt-6 pt-6 border-t border-[#222]">
+        <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest text-center">Registrace nového řidiče</h3>
+        <input 
+          type="text" 
+          placeholder="Celé jméno" 
+          className="w-full bg-[#111] p-3 rounded-xl border border-[#333] outline-none text-xs font-bold text-white focus:border-emerald-500"
+          value={regName}
+          onChange={e => setRegName(e.target.value)}
+        />
+        <input 
+          type="email" 
+          placeholder="E-mail" 
+          className="w-full bg-[#111] p-3 rounded-xl border border-[#333] outline-none text-xs font-bold text-white focus:border-emerald-500"
+          value={regEmail}
+          onChange={e => setRegEmail(e.target.value)}
+        />
+        <input 
+          type="password" 
+          placeholder="Heslo" 
+          className="w-full bg-[#111] p-3 rounded-xl border border-[#333] outline-none text-xs font-bold text-white focus:border-emerald-500"
+          value={regPass}
+          onChange={e => setRegPass(e.target.value)}
+        />
+        {regError && <p className="text-[10px] text-red-500 text-center font-bold">{regError}</p>}
+        <button 
+          onClick={handleRegister}
+          disabled={isRegistering}
+          className="w-full bg-[#222] hover:bg-[#333] py-3 rounded-xl font-black text-[10px] shadow-xl transition-all uppercase tracking-widest flex items-center justify-center gap-2"
+        >
+          {isRegistering ? 'Zpracovávám...' : 'Odeslat žádost o registraci'}
+          {!isRegistering && <ShieldCheck size={14} className="text-emerald-500" />}
+        </button>
+      </div>
+    );
+  };
+
+  if (!user || !driverProfile) {
+    return (
+      <div className="fixed inset-0 bg-[#0d0d0d] flex items-center justify-center p-6 bg-[radial-gradient(circle_at_center,_#1a1a1a_0%,_#000_100%)] overflow-y-auto">
         <motion.div 
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -272,45 +467,94 @@ export default function App() {
           <div className="w-20 h-20 bg-emerald-600 rounded-3xl flex items-center justify-center mb-6 shadow-[0_0_20px_rgba(16,185,129,0.3)]">
             <Bus size={40} className="text-white" />
           </div>
-          <h1 className="text-center font-black text-white text-2xl tracking-tighter mb-1 uppercase">Synergy OCC</h1>
-          <p className="text-[10px] font-black text-gray-600 uppercase tracking-widest mb-8">Příhlášení řidiče</p>
+          <h1 className="text-center font-black text-white text-2xl tracking-tighter mb-1 uppercase italic">Synergy OCC</h1>
+          <p className="text-[10px] font-black text-gray-600 uppercase tracking-widest mb-8 text-center leading-relaxed">
+            {user && !driverProfile ? 'Ověření profilu' : 'Odbavovací systém Synergy'}
+          </p>
           
           <div className="w-full space-y-4">
-            <div>
-              <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block px-1">Profil řidiče</label>
-              <input 
-                id="driver-input"
-                type="text" 
-                placeholder="Zadejte jméno nebo ID"
-                className="w-full bg-[#111] p-5 rounded-2xl border border-[#333] outline-none font-bold text-white focus:border-emerald-500 transition-all text-center mb-3"
-              />
-              <label className="text-[10px] font-black text-gray-600 uppercase mb-2 block px-1">Přístupové heslo</label>
-              <input 
-                id="password-input"
-                type="password" 
-                placeholder="••••••••"
-                className="w-full bg-[#111] p-5 rounded-2xl border border-[#333] outline-none font-bold text-white focus:border-emerald-500 transition-all text-center"
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    const name = (document.getElementById('driver-input') as HTMLInputElement).value;
-                    handleDriverLogin(name);
-                  }
-                }}
-              />
-            </div>
-            
-            <button 
-              onClick={() => {
-                const val = (document.getElementById('driver-input') as HTMLInputElement).value;
-                handleDriverLogin(val);
-              }}
-              className="w-full bg-emerald-600 hover:bg-emerald-500 py-5 rounded-2xl font-black text-sm shadow-xl active:scale-95 transition-all"
-            >
-              SPUSTIT SYSTÉM
-            </button>
+            {!user ? (
+              <>
+                <button 
+                  onClick={handleGoogleLogin}
+                  className="w-full bg-[#222] hover:bg-[#333] py-5 rounded-2xl font-black text-[10px] shadow-xl transition-all flex items-center justify-center gap-3 border border-[#333] uppercase"
+                >
+                  <Mail size={18} className="text-emerald-500" />
+                  Přihlásit přes Google
+                </button>
+                
+                <div className="flex items-center gap-4 py-2">
+                  <div className="flex-1 h-px bg-[#222]" />
+                  <span className="text-[8px] font-black text-gray-700 uppercase">Nebo</span>
+                  <div className="flex-1 h-px bg-[#222]" />
+                </div>
+
+                <div className="space-y-4">
+                  <input 
+                    id="email-input"
+                    type="email" 
+                    placeholder="E-mail"
+                    className="w-full bg-[#111] p-5 rounded-2xl border border-[#333] outline-none font-bold text-white focus:border-emerald-500 transition-all text-center text-sm"
+                  />
+                  <input 
+                    id="password-input"
+                    type="password" 
+                    placeholder="Heslo"
+                    className="w-full bg-[#111] p-5 rounded-2xl border border-[#333] outline-none font-bold text-white focus:border-emerald-500 transition-all text-center text-sm"
+                    onKeyDown={async (e) => {
+                      if (e.key === 'Enter') {
+                        const email = (document.getElementById('email-input') as HTMLInputElement).value;
+                        const pass = (document.getElementById('password-input') as HTMLInputElement).value;
+                        try {
+                          await signInWithEmailAndPassword(auth, email, pass);
+                        } catch (err: any) {
+                          setLoginError('Nesprávné údaje.');
+                        }
+                      }
+                    }}
+                  />
+                  <button 
+                    onClick={async () => {
+                      const email = (document.getElementById('email-input') as HTMLInputElement).value;
+                      const pass = (document.getElementById('password-input') as HTMLInputElement).value;
+                      try {
+                        await signInWithEmailAndPassword(auth, email, pass);
+                      } catch (err: any) {
+                        setLoginError('Nesprávné údaje.');
+                      }
+                    }}
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 py-5 rounded-2xl font-black text-sm shadow-xl active:scale-95 transition-all text-white flex items-center justify-center gap-2"
+                  >
+                    <LogIn size={18} /> PŘIHLÁSIT SE
+                  </button>
+                </div>
+                
+                {loginError && <p className="text-[10px] text-red-500 text-center font-bold mt-2">{loginError}</p>}
+                
+                <RegisterSection />
+              </>
+            ) : (
+              <div className="text-center space-y-6">
+                <div className="p-6 bg-red-500/10 rounded-2xl border border-red-500/20">
+                  <ShieldCheck size={48} className="mx-auto text-red-500 mb-4" />
+                  <p className="text-sm font-bold text-red-500 leading-relaxed">
+                    {loginError}
+                  </p>
+                  <p className="text-[10px] text-gray-500 mt-2">
+                    ID: {user.uid}
+                  </p>
+                </div>
+                <button 
+                  onClick={handleLogout}
+                  className="w-full bg-[#222] py-4 rounded-xl font-black text-xs shadow-xl flex items-center justify-center gap-2"
+                >
+                  <LogOut size={16} /> ODHLÁSIT SE
+                </button>
+              </div>
+            )}
           </div>
           
-          <p className="mt-8 text-[9px] text-gray-700 font-bold uppercase tracking-tighter">AI Studio Build v4.2</p>
+          <p className="mt-8 text-[9px] text-gray-700 font-bold uppercase tracking-tighter">Synergy OCC Cloud v4.2</p>
         </motion.div>
       </div>
     );
@@ -326,7 +570,7 @@ export default function App() {
             {config.lineNumber}
           </div>
           <div className="flex flex-col overflow-hidden max-w-[100px] md:max-w-none">
-            <span className="text-[8px] md:text-[10px] uppercase tracking-wider text-gray-500 font-bold">Směr</span>
+            <span className="text-[8px] md:text-[10px] uppercase tracking-wider text-gray-500 font-bold">Řidič: {driverProfile.name.toUpperCase()}</span>
             <span className="text-xs md:text-sm font-bold truncate leading-tight">{config.destination}</span>
           </div>
         </div>
@@ -581,7 +825,7 @@ export default function App() {
                   <div className="bg-[#222] p-4 rounded-xl border border-[#333] flex items-center justify-between">
                     <div>
                       <label className="block text-[8px] font-black text-gray-500 uppercase">Aktuálně přihlášen</label>
-                      <span className="text-xs font-bold text-emerald-500">{driver?.name}</span>
+                      <span className="text-xs font-bold text-emerald-500">{driverProfile?.name}</span>
                     </div>
                     <button 
                       onClick={handleLogout}

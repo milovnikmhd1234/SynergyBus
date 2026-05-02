@@ -1,0 +1,60 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helpers
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/drivers/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/drivers/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    function isValidDriver(data) {
+      return data.keys().hasAll(['userId', 'name', 'role']) &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.role in ['driver', 'admin'];
+    }
+
+    // Drivers collection
+    match /drivers/{driverId} {
+      allow get: if isSignedIn() && (isOwner(driverId) || isAdmin());
+      allow list: if isAdmin();
+      
+      // Allow creation if it's the owner and setting role to 'driver' by default
+      // In a real app, you might want a more restricted creation flow
+      allow create: if isSignedIn() && isOwner(driverId) && 
+                     isValidDriver(request.resource.data) &&
+                     request.resource.data.role == 'driver';
+                     
+      allow update: if isSignedIn() && (
+        (isOwner(driverId) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'lastLogin'])) ||
+        isAdmin()
+      );
+    }
+
+    // Transactions collection
+    match /transactions/{transactionId} {
+      allow get: if isSignedIn() && (resource.data.driverId == request.auth.uid || isAdmin());
+      allow list: if isSignedIn() && (resource.data.driverId == request.auth.uid || isAdmin());
+      
+      allow create: if isSignedIn() && 
+                    request.resource.data.driverId == request.auth.uid &&
+                    request.resource.data.total is number &&
+                    request.resource.data.timestamp is timestamp;
+      
+      allow update, delete: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "entities": {
+    "Driver": {
+      "title": "Driver Profile",
+      "description": "Metadata for a registered driver.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "isApproved": { "type": "boolean" },
+        "role": { "type": "string", "enum": ["driver", "admin"] },
+        "lastLogin": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "role"]
+    },
+    "Transaction": {
+      "title": "Sale Transaction",
+      "description": "A recorded ticket sale.",
+      "type": "object",
+      "properties": {
+        "driverId": { "type": "string" },
+        "total": { "type": "number" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "method": { "type": "string", "enum": ["cash", "card"] },
+        "items": { "type": "array" }
+      },
+      "required": ["driverId", "total", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/drivers/{driverId}": {
+      "schema": "Driver",
+      "description": "Registered driver profiles."
+    },
+    "/transactions/{transactionId}": {
+      "schema": "Transaction",
+      "description": "Sale history log."
+    }
+  }
+}
