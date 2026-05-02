@@ -13,29 +13,47 @@
     <!-- Lucide ikony -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=JetBrains+Mono:wght@700&display=swap');
         body { 
             font-family: 'Inter', sans-serif; 
             -webkit-tap-highlight-color: transparent; 
             touch-action: manipulation;
+            background-color: #000;
         }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
         .custom-scrollbar::-webkit-scrollbar { width: 4px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #333; border-radius: 10px; }
-        /* Animace pro hlášení */
+        
         @keyframes pulse-green {
             0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
             70% { box-shadow: 0 0 0 10px rgba(16, 185, 129, 0); }
             100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
         }
         .pulse-active { animation: pulse-green 2s infinite; }
+
+        @keyframes scanline {
+            0% { transform: translateY(-100%); }
+            100% { transform: translateY(100%); }
+        }
+        .scanline {
+            height: 10px;
+            background: linear-gradient(to bottom, rgba(16, 185, 129, 0) 0%, rgba(16, 185, 129, 0.1) 50%, rgba(16, 185, 129, 0) 100%);
+            animation: scanline 4s linear infinite;
+        }
+
+        /* CRT efekt pro vypnutý stav */
+        .crt-off {
+            filter: brightness(0);
+            transition: filter 0.5s ease-out;
+        }
     </style>
 </head>
-<body class="bg-[#0a0a0a] text-white overflow-hidden select-none">
+<body class="text-white overflow-hidden select-none">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useCallback } = React;
+        const { useState, useEffect, useCallback, useRef } = React;
 
         const TICKETS = [
             { id: '1', name: 'Základní 30 min', price: 30, category: 'base', color: 'bg-emerald-600' },
@@ -51,6 +69,13 @@
         ];
 
         function App() {
+            // STATE: SYSTEM
+            const [isPoweredOn, setIsPoweredOn] = useState(false);
+            const [isBooting, setIsBooting] = useState(false);
+            const [driver, setDriver] = useState(() => {
+                const saved = localStorage.getItem('synergy_driver');
+                return saved ? JSON.parse(saved) : null;
+            });
             const [config, setConfig] = useState(() => {
                 const saved = localStorage.getItem('synergy_config');
                 return saved ? JSON.parse(saved) : {
@@ -60,6 +85,7 @@
                 };
             });
 
+            // STATE: APP
             const [cart, setCart] = useState([]);
             const [currentTime, setCurrentTime] = useState(new Date());
             const [currentStopIndex, setCurrentStopIndex] = useState(0);
@@ -69,20 +95,23 @@
             const [showMobileCart, setShowMobileCart] = useState(false);
             const [tempConfig, setTempConfig] = useState(config);
 
-            const playPaymentSound = () => {
+            // SOUNDS
+            const playSound = (freq, duration, type = 'sine') => {
                 try {
                     const ctx = new (window.AudioContext || window.webkitAudioContext)();
                     const osc = ctx.createOscillator();
                     const gain = ctx.createGain();
-                    osc.type = 'sine';
-                    osc.frequency.setValueAtTime(880, ctx.currentTime);
-                    osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.1);
+                    osc.type = type;
+                    osc.frequency.setValueAtTime(freq, ctx.currentTime);
                     gain.gain.setValueAtTime(0.1, ctx.currentTime);
-                    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+                    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + duration);
                     osc.connect(gain); gain.connect(ctx.destination);
-                    osc.start(); osc.stop(ctx.currentTime + 0.2);
+                    osc.start(); osc.stop(ctx.currentTime + duration);
                 } catch (e) {}
             };
+
+            const playPaymentSound = () => playSound(880, 0.2);
+            const playBeepSound = () => playSound(660, 0.3, 'square'); // Výstražné pípnutí odjezdu
 
             const playAnnouncement = useCallback(() => {
                 const stops = config.stops;
@@ -99,7 +128,7 @@
                 
                 const msg = new SpeechSynthesisUtterance(text);
                 msg.lang = 'cs-CZ';
-                msg.pitch = 0.82; // Mužský tón
+                msg.pitch = 0.82;
                 msg.rate = 0.9;
                 
                 const voices = window.speechSynthesis.getVoices();
@@ -117,7 +146,32 @@
             useEffect(() => {
                 localStorage.setItem('synergy_config', JSON.stringify(config));
                 if (window.lucide) lucide.createIcons();
-            }, [config, showSettings, showMobileCart]);
+            }, [config, showSettings, showMobileCart, isPoweredOn, driver]);
+
+            const handlePowerOn = () => {
+                setIsBooting(true);
+                playSound(440, 0.5);
+                setTimeout(() => {
+                    setIsBooting(false);
+                    setIsPoweredOn(true);
+                }, 3000);
+            };
+
+            const handlePowerOff = () => {
+                 setIsPoweredOn(false);
+                 setCart([]);
+            };
+
+            const handleDriverLogin = (name) => {
+                const newDriver = { name, loginTime: new Date().toLocaleTimeString() };
+                setDriver(newDriver);
+                localStorage.setItem('synergy_driver', JSON.stringify(newDriver));
+            };
+
+            const nextStop = () => {
+                playBeepSound(); // Pípnutí odjezdu
+                setCurrentStopIndex((currentStopIndex + 1) % config.stops.length);
+            };
 
             const addToCart = (ticket) => {
                 setCart(prev => {
@@ -152,6 +206,71 @@
                 }, 1200);
             };
 
+            // --- RENDER SCREENS ---
+
+            // Screen 0: Powered Off
+            if (!isPoweredOn && !isBooting) {
+                return (
+                    <div className="fixed inset-0 bg-black flex flex-col items-center justify-center gap-8 cursor-pointer" onClick={handlePowerOn}>
+                        <div className="w-24 h-24 rounded-full border-4 border-gray-900 flex items-center justify-center text-gray-800">
+                           <i data-lucide="power" style={{width: 48, height: 48}}></i>
+                        </div>
+                        <span className="text-[10px] font-black tracking-[0.3em] text-gray-800 uppercase">Click to start Synergy OCC</span>
+                    </div>
+                );
+            }
+
+            // Screen 1: Booting
+            if (isBooting) {
+                return (
+                    <div className="fixed inset-0 bg-[#0a0a0a] flex flex-col p-8 font-mono text-emerald-500 text-xs">
+                        <div className="absolute inset-0 scanline opacity-30"></div>
+                        <div className="space-y-1">
+                            <p>> BIOS v4.2.14 LOADED</p>
+                            <p>> SELF-TEST: OK</p>
+                            <p>> STORAGE DEVICE: EMCC_DISK0 [MOUNTED]</p>
+                            <p>> BOOTING SYNERGY OCC OS...</p>
+                            <div className="h-1 bg-emerald-900 mt-4 rounded-full overflow-hidden w-48">
+                                <motion.div className="h-full bg-emerald-500" initial={{width: 0}} animate={{width: '100%'}} transition={{duration: 2.8}} />
+                            </div>
+                            <p className="mt-8 opacity-50">Copyright (c) 2024 Mikroelektronika</p>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Screen 2: Driver Login
+            if (!driver) {
+                return (
+                    <div className="fixed inset-0 bg-[#0d0d0d] flex items-center justify-center p-6 flex-col">
+                        <div className="mb-12 text-center">
+                            <div className="text-emerald-500 font-black text-2xl tracking-tighter mb-1">SYNERGY OCC</div>
+                            <div className="text-[10px] text-gray-600 font-black uppercase tracking-widest">Příhlášení k terminálu</div>
+                        </div>
+                        <div className="bg-[#161616] w-full max-w-sm rounded-[2.5rem] border border-[#222] p-8 shadow-2xl">
+                             <label className="text-[10px] font-black text-gray-500 uppercase mb-4 block">IDENTIFIKACE ŘIDIČE</label>
+                             <input 
+                                id="driver-input"
+                                type="text"
+                                placeholder="Jméno / ID řidiče"
+                                className="w-full bg-[#222] p-5 rounded-2xl mb-6 outline-none border border-transparent focus:border-emerald-500 font-bold transition-all"
+                                onKeyDown={(e) => e.key === 'Enter' && handleDriverLogin(e.target.value)}
+                             />
+                             <button 
+                                onClick={() => {
+                                    const val = document.getElementById('driver-input').value;
+                                    if(val) handleDriverLogin(val);
+                                }}
+                                className="w-full bg-emerald-600 py-5 rounded-2xl font-black shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
+                             >
+                                PŘIHLÁSIT SE
+                             </button>
+                        </div>
+                    </div>
+                );
+            }
+
+            // Screen 3: Main App
             return (
                 <div className="fixed inset-0 flex flex-col overflow-hidden bg-[#0d0d0d]">
                     {/* Header */}
@@ -159,30 +278,32 @@
                         <div className="flex items-center gap-2">
                             <div className="bg-emerald-600 px-2 py-1 rounded font-black text-lg shadow-[0_0_10px_rgba(16,185,129,0.3)]">{config.lineNumber}</div>
                             <div className="flex flex-col">
-                                <span className="text-[8px] uppercase text-gray-500 font-bold">SMĚR</span>
-                                <span className="text-xs font-bold truncate max-w-[100px] leading-tight">{config.destination}</span>
+                                <span className="text-[7px] uppercase text-gray-500 font-black">ŘIDIČ: {driver.name.toUpperCase()}</span>
+                                <span className="text-xs font-bold truncate max-w-[100px] leading-tight text-white/90">{config.destination}</span>
                             </div>
                         </div>
-                        <div className="text-lg font-mono font-black text-emerald-500">
+                        <div className="text-lg font-mono font-black text-emerald-500 tracking-tighter">
                             {currentTime.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit' })}
                         </div>
-                        <button onClick={() => { setTempConfig(config); setShowSettings(true); }} className="w-9 h-9 rounded-xl bg-[#222] border border-[#333] flex items-center justify-center text-gray-400 active:bg-emerald-600 active:text-white transition-colors">
-                            <i data-lucide="settings" style={{width: 18}}></i>
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <button onClick={() => { setTempConfig(config); setShowSettings(true); }} className="w-10 h-10 rounded-xl bg-[#222] border border-[#333] flex items-center justify-center text-gray-400">
+                                <i data-lucide="settings" style={{width: 18}}></i>
+                            </button>
+                        </div>
                     </header>
 
                     {/* Zastávka Bar */}
-                    <div className="bg-black/60 px-3 py-2 border-b border-[#222] flex items-center justify-between text-xs font-bold text-emerald-400">
+                    <div className="bg-black/80 px-3 py-2 border-b border-[#222] flex items-center justify-between text-xs font-bold text-emerald-400 shadow-xl">
                         <div className="flex items-center gap-3 overflow-hidden">
-                            <button onClick={playAnnouncement} className="w-8 h-8 bg-emerald-500/10 rounded-full flex items-center justify-center pulse-active flex-shrink-0">
-                                <i data-lucide="volume-2" style={{width: 14}}></i>
+                            <button onClick={playAnnouncement} className="w-9 h-9 bg-emerald-500/10 rounded-full flex items-center justify-center pulse-active flex-shrink-0 active:scale-90 transition-transform">
+                                <i data-lucide="volume-2" style={{width: 16}}></i>
                             </button>
-                            <div className="flex flex-col overflow-hidden">
-                                <span className="text-[7px] text-gray-600 uppercase font-black">Aktuální stanice</span>
-                                <span className="truncate">{config.stops[currentStopIndex]}</span>
+                            <div className="flex flex-col overflow-hidden leading-snug">
+                                <span className="text-[7px] text-gray-600 uppercase font-black">Právě odbavujeme</span>
+                                <span className="truncate text-sm tracking-tight">{config.stops[currentStopIndex]}</span>
                             </div>
                         </div>
-                        <button onClick={() => setCurrentStopIndex((currentStopIndex + 1) % config.stops.length)} className="bg-emerald-500/20 text-emerald-500 px-3 py-2 rounded-lg text-[10px] active:scale-95 transition-transform uppercase font-black">DALŠÍ</button>
+                        <button onClick={nextStop} className="bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-[10px] active:scale-90 transition-all uppercase font-black shadow-lg shadow-emerald-500/20">ODJEZD</button>
                     </div>
 
                     {/* Main Grid */}
@@ -196,9 +317,9 @@
                                         onClick={() => addToCart(t)}
                                         className={`${t.color} p-3 rounded-2xl h-24 text-left flex flex-col justify-between border border-white/5 shadow-lg active:scale-95 transition-transform relative overflow-hidden group`}
                                     >
-                                        <div className="font-bold text-xs leading-tight drop-shadow-md">{t.name}</div>
+                                        <div className="font-black text-xs leading-tight drop-shadow-md pr-6">{t.name}</div>
                                         <div className="text-right text-xl font-black drop-shadow-lg">{t.price} <small className="text-[10px] font-normal opacity-70">Kč</small></div>
-                                        <div className="absolute top-1 right-2 opacity-10"><i data-lucide="ticket" style={{width: 32}}></i></div>
+                                        <div className="absolute top-1 right-2 opacity-10"><i data-lucide="ticket" style={{width: 24}}></i></div>
                                     </button>
                                 ))}
                             </div>
@@ -206,59 +327,63 @@
 
                         {/* Desktop Cart Sidebar */}
                         <aside className="hidden md:flex w-80 bg-[#161616] border-l border-[#222] flex-col shadow-2xl">
-                            <div className="p-4 font-black border-b border-[#222] text-[10px] tracking-widest text-gray-500 uppercase">Nákupní seznam</div>
+                            <div className="p-4 font-black border-b border-[#222] text-[10px] tracking-widest text-gray-500 uppercase">Košík jízdenek</div>
                             <div className="flex-1 overflow-y-auto p-3 space-y-2 custom-scrollbar">
-                                {cart.map(item => (
+                                {cart.length === 0 ? (
+                                    <div className="h-full flex flex-col items-center justify-center opacity-10 text-gray-400">
+                                        <i data-lucide="shopping-cart" style={{width:64, height:64}}></i>
+                                    </div>
+                                ) : cart.map(item => (
                                     <div key={item.id} className="bg-[#1f1f1f] p-3 rounded-xl border border-[#222] flex justify-between items-center text-xs">
                                         <div><div className="font-bold">{item.name}</div><div className="text-emerald-500 font-black">{item.quantity}x <span className="text-gray-600 text-[10px]">({item.price} Kč)</span></div></div>
                                         <div className="font-black text-sm">{item.price * item.quantity} Kč</div>
                                     </div>
                                 ))}
                             </div>
-                            <div className="p-4 bg-black/40 border-t border-[#222] space-y-4">
-                                <div className="flex justify-between items-end"><span className="text-[10px] font-black text-gray-600 uppercase">CELKEM K ÚHRADĚ</span> <span className="text-3xl font-black text-emerald-500">{total} Kč</span></div>
+                            <div className="p-4 bg-black/40 border-t border-[#333] space-y-4">
+                                <div className="flex justify-between items-end mb-2"><span className="text-[10px] font-black text-gray-600 uppercase">Celkem</span> <span className="text-3xl font-black text-emerald-500 leading-none">{total} Kč</span></div>
                                 <div className="grid grid-cols-2 gap-2">
-                                   <button disabled={cart.length === 0} onClick={handlePayment} className="bg-[#222] border border-[#333] p-3 rounded-xl flex flex-col items-center gap-1 font-black text-[9px] hover:bg-emerald-600 transition-colors">
-                                       <i data-lucide="banknote" style={{width: 18}}></i>HOTOVOST
+                                   <button disabled={cart.length === 0} onClick={handlePayment} className="bg-[#222] border border-[#333] p-4 rounded-xl flex flex-col items-center gap-2 font-black text-[9px] hover:bg-emerald-600 transition-colors">
+                                       <i data-lucide="banknote"></i>HOTOVOST
                                    </button>
-                                   <button disabled={cart.length === 0} onClick={handlePayment} className="bg-[#222] border border-[#333] p-3 rounded-xl flex flex-col items-center gap-1 font-black text-[9px] hover:bg-sky-600 transition-colors">
-                                       <i data-lucide="credit-card" style={{width: 18}}></i>KARTA
+                                   <button disabled={cart.length === 0} onClick={handlePayment} className="bg-[#222] border border-[#333] p-4 rounded-xl flex flex-col items-center gap-2 font-black text-[9px] hover:bg-sky-600 transition-colors">
+                                       <i data-lucide="credit-card"></i>KARTA
                                    </button>
                                 </div>
                             </div>
                         </aside>
                     </main>
 
-                    {/* Mobile Cart Button */}
-                    <footer className="md:hidden h-16 bg-[#1a1a1a] border-t border-[#222] flex items-center px-3 gap-2 flex-shrink-0 shadow-2xl">
-                        <button onClick={() => setShowMobileCart(true)} className="flex-1 bg-emerald-600 h-12 rounded-2xl flex items-center justify-center font-black gap-2 relative active:scale-95 transition-all shadow-[0_0_20px_rgba(16,185,129,0.4)]">
+                    {/* Mobile Footer Cart Button */}
+                    <footer className="md:hidden h-16 bg-[#1a1a1a] border-t border-[#333] flex items-center px-3 gap-2 flex-shrink-0 shadow-2xl">
+                        <button onClick={() => setShowMobileCart(true)} className="flex-1 bg-emerald-600 h-11 rounded-xl flex items-center justify-center font-black gap-2 relative active:scale-95 transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]">
                             <i data-lucide="shopping-cart" style={{width: 18}}></i>
                             KOŠÍK
                             {cart.length > 0 && <span className="absolute -top-1 -right-1 bg-white text-emerald-600 w-6 h-6 rounded-full text-[12px] flex items-center justify-center border-2 border-emerald-600">{cart.reduce((a,b) => a+b.quantity, 0)}</span>}
                         </button>
-                        <div className="bg-[#222] h-12 px-4 rounded-2xl flex items-center font-black text-emerald-500 border border-[#333] min-w-[80px] justify-center">{total} Kč</div>
+                        <div className="bg-[#222] h-11 px-4 rounded-xl flex items-center font-black text-emerald-500 border border-[#333] min-w-[80px] justify-center">{total} Kč</div>
                     </footer>
 
-                    {/* Mobile Cart Modal Overlay */}
+                    {/* Mobile Cart Detail Overlay */}
                     {showMobileCart && (
                         <div className="md:hidden fixed inset-0 bg-black/95 z-[100] flex flex-col animate-in slide-in-from-bottom duration-300">
-                            <div className="p-4 border-b border-[#222] flex justify-between items-center bg-[#1a1a1a]">
-                                <span className="font-black tracking-widest text-emerald-500 text-sm">PODROBNOSTI NÁKUPU</span>
-                                <button onClick={() => setShowMobileCart(false)} className="bg-[#333] w-10 h-10 rounded-xl flex items-center justify-center">X</button>
+                            <div className="p-4 border-b border-[#333] flex justify-between items-center bg-[#1a1a1a]">
+                                <span className="font-black tracking-widest text-emerald-500 text-sm">PODROBNOSTI KOŠÍKU</span>
+                                <button onClick={() => setShowMobileCart(false)} className="bg-[#333] w-10 h-10 rounded-xl flex items-center justify-center active:bg-red-600">X</button>
                             </div>
                             <div className="flex-1 overflow-y-auto p-4 space-y-3">
                                 {cart.map(item => (
                                     <div key={item.id} className="bg-[#1a1a1a] p-4 rounded-2xl flex justify-between items-center border border-[#333]">
-                                        <div><div className="font-bold text-sm">{item.name}</div><div className="text-emerald-500 font-black text-lg">{item.quantity}x</div></div>
-                                        <div className="font-black text-xl">{item.price * item.quantity} Kč</div>
+                                        <div><div className="font-black text-xs">{item.name}</div><div className="text-emerald-500 font-black text-xl">{item.quantity}x</div></div>
+                                        <div className="font-black text-2xl">{item.price * item.quantity} Kč</div>
                                     </div>
                                 ))}
                             </div>
-                            <div className="p-6 bg-[#1a1a1a] border-t border-[#333] rounded-t-3xl shadow-2xl">
-                                <div className="flex justify-between items-center mb-6"><span className="font-black text-gray-500 uppercase text-xs">CELKEM</span><span className="text-4xl font-black text-emerald-500">{total} Kč</span></div>
-                                <div className="grid grid-cols-2 gap-3">
-                                    <button onClick={handlePayment} className="bg-[#222] border border-[#333] p-5 rounded-2xl flex flex-col items-center gap-2 font-black text-[10px]"><i data-lucide="banknote"></i>HOTOVOST</button>
-                                    <button onClick={handlePayment} className="bg-[#222] border border-[#333] p-5 rounded-2xl flex flex-col items-center gap-2 font-black text-[10px]"><i data-lucide="credit-card"></i>KARTA</button>
+                            <div className="p-6 bg-[#1a1a1a] border-t border-[#333] rounded-t-[2.5rem] shadow-2xl">
+                                <div className="flex justify-between items-center mb-6"><span className="font-black text-gray-600 uppercase text-xs">Celková suma</span><span className="text-4xl font-black text-emerald-500">{total} Kč</span></div>
+                                <div className="grid grid-cols-2 gap-3 pb-4">
+                                    <button onClick={handlePayment} className="bg-[#222] border border-[#333] p-6 rounded-2xl flex flex-col items-center gap-2 font-black text-[10px] active:bg-emerald-600"><i data-lucide="banknote"></i>HOTOVOST</button>
+                                    <button onClick={handlePayment} className="bg-[#222] border border-[#333] p-6 rounded-2xl flex flex-col items-center gap-2 font-black text-[10px] active:bg-sky-600"><i data-lucide="credit-card"></i>KARTA</button>
                                 </div>
                             </div>
                         </div>
@@ -266,28 +391,48 @@
 
                     {/* Settings Modal */}
                     {showSettings && (
-                        <div className="fixed inset-0 bg-black/95 z-[110] flex items-center justify-center p-4">
-                            <div className="bg-[#1a1a1a] w-full max-w-sm rounded-3xl border border-[#333] overflow-hidden flex flex-col shadow-2xl">
-                                <div className="p-5 border-b border-[#333] flex justify-between items-center font-black text-xs uppercase tracking-widest text-gray-500">Konfigurace kasy <button onClick={() => setShowSettings(false)} className="w-8 h-8 rounded-full bg-[#222] flex items-center justify-center">X</button></div>
-                                <div className="p-6 space-y-5 flex-1 overflow-y-auto custom-scrollbar">
+                        <div className="fixed inset-0 bg-black/98 z-[110] flex items-center justify-center p-4">
+                            <div className="bg-[#1a1a1a] w-full max-w-sm rounded-[2rem] border border-[#333] overflow-hidden flex flex-col shadow-2xl h-[90vh]">
+                                <div className="p-5 border-b border-[#333] flex justify-between items-center font-black text-xs uppercase tracking-widest text-gray-500">Konfigurace systému <button onClick={() => setShowSettings(false)} className="w-10 h-10 rounded-full bg-[#222] flex items-center justify-center active:bg-emerald-600">X</button></div>
+                                <div className="p-6 space-y-6 flex-1 overflow-y-auto custom-scrollbar">
+                                    <div className="bg-red-500/10 border border-red-500/20 p-4 rounded-2xl flex items-center justify-between">
+                                          <div>
+                                              <p className="text-[10px] font-black text-red-500">ŘÍZENÍ SYSTÉMU</p>
+                                              <p className="text-[8px] text-gray-600 font-bold uppercase">Ukončí směnu a odhlásí řidiče</p>
+                                          </div>
+                                          <button onClick={handlePowerOff} className="bg-red-600 w-10 h-10 rounded-xl flex items-center justify-center"><i data-lucide="power" size="18"></i></button>
+                                    </div>
+
                                     <div><label className="text-[9px] text-gray-500 font-black block mb-1">ČÍSLO LINKY</label><input className="w-full bg-[#222] p-4 rounded-2xl font-black text-emerald-500 border border-[#333] outline-none" value={tempConfig.lineNumber} onChange={e => setTempConfig({...tempConfig, lineNumber: e.target.value})} /></div>
                                     <div><label className="text-[9px] text-gray-500 font-black block mb-1">CÍLOVÁ STANICE</label><input className="w-full bg-[#222] p-4 rounded-2xl font-bold border border-[#333] outline-none" value={tempConfig.destination} onChange={e => setTempConfig({...tempConfig, destination: e.target.value})} /></div>
                                     <div>
                                         <label className="text-[9px] text-gray-500 font-black block mb-1">ZASTÁVKY (KAŽDÁ NA NOVÝ ŘÁDEK)</label>
                                         <textarea className="w-full bg-[#222] p-4 rounded-2xl text-[11px] font-medium border border-[#333] outline-none h-40 leading-relaxed custom-scrollbar" value={tempConfig.stops.join('\n')} onChange={e => setTempConfig({...tempConfig, stops: e.target.value.split('\n').map(s => s.trim()).filter(Boolean)})} placeholder="Např:&#10;Hlavní nádraží&#10;Česká (z)" />
-                                        <p className="text-[8px] text-gray-600 mt-2 italic font-medium px-1">* Pro zastávku na znamení dopiš (z) k názvu.</p>
+                                    </div>
+                                    <div className="bg-[#222] p-4 rounded-2xl flex items-center justify-between">
+                                         <span className="text-[10px] font-black text-gray-600 uppercase">Aktuální profil řidiče</span>
+                                         <button 
+                                            onClick={() => {
+                                                localStorage.removeItem('synergy_driver');
+                                                setDriver(null);
+                                                setShowSettings(false);
+                                            }}
+                                            className="text-[9px] font-black text-emerald-500 border border-emerald-500/30 px-3 py-1.5 rounded-lg active:bg-emerald-600 active:text-white"
+                                         >
+                                            ODHLÁSIT: {driver.name.split(' ')[0]}
+                                         </button>
                                     </div>
                                 </div>
-                                <div className="p-4 bg-black/20">
-                                    <button onClick={() => { setConfig(tempConfig); setShowSettings(false); setCurrentStopIndex(0); }} className="w-full bg-emerald-600 py-4 rounded-2xl font-black uppercase text-xs shadow-xl active:scale-95 transition-transform">Uložit a nahrát line-up</button>
+                                <div className="p-4 bg-black/40">
+                                    <button onClick={() => { setConfig(tempConfig); setShowSettings(false); setCurrentStopIndex(0); }} className="w-full bg-emerald-600 py-4 rounded-2xl font-black uppercase text-xs shadow-xl active:scale-95 transition-transform">Uložit nákres linky</button>
                                 </div>
                             </div>
                         </div>
                     )}
 
                     {/* Status Overlays */}
-                    {isPaying && <div className="fixed inset-0 bg-black/90 z-[200] flex flex-col items-center justify-center font-black animate-pulse gap-4 text-emerald-500"><i data-lucide="loader-2" class="animate-spin" size="48"></i><span className="tracking-widest">PROBÍHÁ AUTORIZACE...</span></div>}
-                    {paymentSuccess && <div className="fixed top-0 left-0 right-0 bg-emerald-500 z-[210] p-5 text-center font-black text-sm shadow-2xl flex items-center justify-center gap-3 animate-in slide-in-from-top"><i data-lucide="check-circle-2"></i>PLATBA ÚSPĚŠNÁ - TISKNU JÍZDENKU</div>}
+                    {isPaying && <div className="fixed inset-0 bg-black/90 z-[200] flex flex-col items-center justify-center font-black animate-pulse gap-4 text-emerald-500"><i data-lucide="loader-2" class="animate-spin" size="48"></i><span className="tracking-widest">AUTORIZACE PLATBY...</span></div>}
+                    {paymentSuccess && <div className="fixed top-0 left-0 right-0 bg-emerald-500 z-[210] p-5 text-center font-black text-sm shadow-2xl flex items-center justify-center gap-3 animate-in slide-in-from-top"><i data-lucide="printer"></i>ZAPLACENO - TISKNEME JÍZDENKU</div>}
                 </div>
             );
         }
@@ -295,7 +440,6 @@
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
 
-        // Refresh icons periodically to handle React re-renders
         setInterval(() => { if (window.lucide) lucide.createIcons(); }, 1000);
     </script>
 </body>
