@@ -1,0 +1,6 @@
+{
+  "name": "Synergy OCC - Mobilní Pokladna",
+  "description": "Nástroj pro simulaci odbavení ve veřejné dopravě. Responzivní pro mobily, s možností úpravy linek a zastávek.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}
